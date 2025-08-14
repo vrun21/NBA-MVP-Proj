@@ -1,0 +1,334 @@
+---
+title: "NBA MVP Analysis"
+author: "Ashwin Dervesh and Varun Vaidya"
+date: "May 9th, 2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(gapminder)
+library (readr)
+library(tidyverse)
+library(ggridges)
+library(tidyr)
+library(fmsb)
+library(tibble)
+library(scales)
+```
+
+```{r, include = FALSE}
+## Loading in Data
+mvp_data <- read_csv("mvp_data.csv")
+mvp_data_2 <- read.csv("mvp_data_2.csv")
+candidates <- read_csv("nba_mvp_candidates_2011_2024.csv")
+```
+
+```{r, include = FALSE}
+candidates <- candidates %>%
+  mutate(
+    Season = str_replace_all(Season, "–", "-"),
+    Season = str_remove_all(Season, "\\*+"),
+    Season = str_trim(Season),
+    Player = str_trim(Player)
+  )
+mvp_data <- mvp_data %>%
+  mutate(
+    SEASON_ID = str_replace_all(SEASON_ID, "–", "-"),
+    SEASON_ID = str_trim(SEASON_ID),
+    Player_Name = str_trim(Player_Name),
+    PointsPerGame = round(PTS / GP, 1)
+  )
+mvp_data <- mvp_data %>%
+  mutate(
+    AssistsPerGame = round(AST / GP, 1),
+    ReboundsPerGame = round(REB / GP, 1)
+  )
+mvp_data_2 <- mvp_data_2 %>%
+  rename('Player' = 'Player.Name')
+combined <- candidates %>%
+  left_join(
+    mvp_data %>%
+      dplyr::select(Player_Name, SEASON_ID, PointsPerGame, AssistsPerGame, ReboundsPerGame, FG_PCT, FG3_PCT, FT_PCT),
+    by = c("Player" = "Player_Name", "Season" = "SEASON_ID")
+  )
+```
+
+```{r, include=FALSE}
+combined_named <- combined %>%
+  mutate(PlayerInitials = str_replace_all(Player, "(\\b\\w)\\w* ?", "\\1")) %>%
+  mutate(PlayerInitials = gsub(" ", "", PlayerInitials))
+comparison_long <- combined_named %>%
+  filter(!is.na(Winner)) %>%
+  mutate(Winner = ifelse(Winner == TRUE, "Winner", "Non-Winner")) %>%
+  pivot_longer(cols = c(PointsPerGame, ReboundsPerGame, AssistsPerGame),
+               names_to = "Stat", values_to = "Value")
+```
+
+```{r, include=FALSE}
+comparison_bar <- combined %>%
+  filter(!is.na(Winner)) %>%
+  mutate(Winner = ifelse(Winner, "MVP Winner", "Candidate")) %>%
+  pivot_longer(cols = c(PointsPerGame, ReboundsPerGame, AssistsPerGame),
+               names_to = "Stat", values_to = "Value")
+comparison_dist <- combined %>%
+  filter(!is.na(Winner)) %>%
+  mutate(Winner = ifelse(Winner, "MVP Winner", "Candidate")) %>%
+  pivot_longer(cols = c(PointsPerGame, ReboundsPerGame, AssistsPerGame),
+               names_to = "Stat", values_to = "Value")
+comparison_fg <- combined %>%
+  filter(!is.na(Winner)) %>%
+  mutate(Winner = ifelse(Winner, "MVP Winner", "Candidate")) %>%
+  pivot_longer(cols = c(FG_PCT, FG3_PCT, FT_PCT),
+               names_to = "Stat", values_to = "Value")
+```
+
+```{r, include=FALSE}
+thresholds <- 25:35
+ppg_thresholds <- map_dfr(thresholds, function(thresh) {
+  data_above <- combined %>% filter(PointsPerGame >= thresh)
+  total <- nrow(data_above)
+  winners <- sum(data_above$Winner == TRUE)
+  tibble(
+    Threshold = thresh,
+    Total = total,
+    Winners = winners,
+    Percent_MVP = ifelse(total == 0, NA, round(100 * winners / total, 1))
+  )
+})
+```
+
+```{r, include = FALSE}
+team_records_for_winner <- tibble(
+  Season = c("2011–12", "2012–13", "2013-14", "2014-15", "2015-16", "2016-17", "2017-18", "2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24"),
+  Player = c("Lebron James", "Lebron James", "Kevin Durant", "Stephen Curry", "Stephen Curry", "Russell Westbrook", "James Harden", "Giannis Antetokounmpo", "Giannis Antetokounmpo", "Nikola Jokic", "Nikola Jokic", "Joel Embiid", "Nikola Jokic"),
+  Team = c("Miami Heat", "Miami Heat", "Oklahoma City Thunder", "Golden State Warriors", "Golden State Warriors", "Oklahoma City Thunder", "Houston Rockets", "Milwaukee Bucks", "Milwaukee Bucks", "Denver Nuggets", "Denver Nuggets", "Philadelphia 76ers", "Denver Nuggets"),
+  Wins = c(45, 61, 58, 67, 71, 46, 59, 56, 51, 47, 46, 43, 55),
+  Losses = c(17, 15, 23, 13, 8, 35, 13, 16, 12, 25, 28, 23, 24)
+) %>%
+  mutate(TeamWinPct = round(Wins / (Wins + Losses), 3))
+avg_win_pct_nonwinners <- tibble(
+  Season = c("2011–12", "2012–13", "2013-14", "2014-15", "2015-16", "2016-17", "2017-18", "2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24"),
+  AvgPlayerWinPct = c(0.683, 0.674, 0.658, 0.647, 0.745, 0.689, 0.667, 0.667, 0.672, 0.667, 0.699, 0.658, 0.661)
+)
+win_pct_compare <- team_records_for_winner %>%
+  dplyr::select(Season, Player, WinnerWinPct = TeamWinPct) %>%
+  left_join(avg_win_pct_nonwinners, by = "Season") %>%
+  mutate(Initials = gsub("([A-Za-z])[a-z]+\\s([A-Za-z])[a-z]+", "\\1\\2", Player))
+```
+
+```{r, include=FALSE}
+position_lookup <- tibble::tribble(
+  ~Player,              ~Position,
+  "Nikola Jokić",       "Center",
+  "Giannis Antetokounmpo", "Forward",
+  "Stephen Curry",      "Guard",
+  "LeBron James",       "Forward",
+  "Kevin Durant",       "Forward",
+  "Russell Westbrook",  "Guard",
+  "James Harden",       "Guard",
+  "Joel Embiid",        "Center",
+)
+combined <- left_join(combined, position_lookup, by = "Player")
+mvp_winners_only <- combined %>%
+  filter(Winner == TRUE)
+```
+
+## Motivation
+
+The NBA MVP is one of the most prestigious individual awards in professional sports. There have been numerous MVP winners over the past few seasons. While the winner is ultimately decided by media votes, there's strong reason to believe that certain statistical trends and team success play a major role. A lot of players who have won the award had unique seasons in which they were successful. The goal of this analysis is to investigate if there are any common trends of past MVP winners between 2011 and 2024. We will be looking at different data and comparing statistics between MVP winners and other candidates from each season. There are a lot of questions we want to answer in this analysis. What statistics do MVP winners excel in? Is there any correlation in basic stats such a points, assists, and rebounds per game? Do other factors such as player and team performance have an influence?
+
+## Comparing Some Basic Statistics
+
+We wanted to see if the basic statistics play a role. The 3 stats we will be looking at is points, rebounds, and assists per game. For these visualizations, we took the stats of the MVP winners and compared them to the average stats of the other candidates who did not win that year. These bar chart shows the comparisons.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+comparison_bar <- combined %>%
+  filter(!is.na(Winner)) %>%
+  mutate(Winner = ifelse(Winner, "MVP Winner", "Candidate")) %>%
+  pivot_longer(cols = c(PointsPerGame, ReboundsPerGame, AssistsPerGame),
+               names_to = "Stat", values_to = "Value")
+ggplot(comparison_bar, aes(x = Season, y = Value, fill = Winner)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  facet_wrap(~Stat, scales = "free_x") +
+  labs(
+    title = "Statistical Comparison of MVP Winners vs. Other Candidates",
+    subtitle = "Points, Rebounds, and Assists per Game from 2011–2024",
+    x = "Season", y = "Per Game Value", fill = "Player Status"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(face = "bold", size = 12)
+  )
+```
+
+This graph shows the comparison between these 3 basic stats. Starting with assists per game, we can see that majority of the winners are below or have just about the same assists per game compared to the non winners. We can argue that assists do not have a huge effect on winning MVP. For points per game, it looks to be pretty equal. The candidates who win the award have a higher PPG or nearly the same compared to the candidates who did not win. We can say that having a similar or greater amount of PPG against other other candidates is important towards winning MVP. Looking at rebounds per game, there is a lot of variation throughout the years. The last couple of years, the winners have had a higher RPG. Then it transitions to the winners having less rebounds than the average. This shows that rebounds is not a huge influence compared to points. It shows that rebounds is more reflective of the position the winner plays.
+
+## Comparing the Distributions of Standard Statistics
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(comparison_dist, aes(x = Value, y = Stat, fill = Winner)) +
+  geom_density_ridges(alpha = 0.6) +
+  labs(title = "Ridgeline Plot of Player Stats by MVP Status",
+       x = "Stat Value", y = "Stat") +
+  theme_minimal()
+```
+
+This ridgeline plot compares the distributions of PointsPerGame, AssistsPerGame, and ReboundsPerGame for MVP Winners and MVP Candidates. The most striking difference appears in PointsPerGame. MVP Winners are heavily concentrated around the 30-point mark, while candidates tend to cluster lower, between 10 and 20 points. This suggests that scoring plays a dominant role in determining the MVP. In terms of AssistsPerGame, both groups have similar distributions, but MVP Winners tend to have slightly higher assist numbers, generally peaking between 7 and 10 assists. ReboundsPerGame shows moderate overlap between the two groups, but MVP Winners have a stronger presence in the 10–15 rebounds range. Overall, this visualization suggests that while rebounding and assisting contribute to MVP success, elite scoring is the most consistent differentiator. MVP-caliber players often pair high point totals with solid contributions in other statistical areas, indicating that a strong all-around performance—especially one led by scoring—is key to winning the award.
+
+## Comparing the Distribution of Efficiency Statistics
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(comparison_fg, aes(x = Value, y = Stat, fill = Winner)) +
+  geom_density_ridges(alpha = 0.6) +
+  labs(title = "Ridgeline Plot of Player Stats by MVP Status",
+       x = "Stat Value", y = "Stat") +
+  theme_minimal()
+```
+
+The ridgeline plot compares the shooting efficiency of MVP winners and non-winners across field goal percentage (FG%), three-point percentage (3P%), and free throw percentage (FT%). While the distributions for 3P% and FT% are largely similar between the two groups, FG% shows a noticeable difference — MVP winners tend to peak farther to the right, indicating higher overall shooting efficiency. This suggests that FG% may be a stronger indicator of MVP success, as it reflects a player’s effectiveness on the majority of their shot attempts, particularly from inside the arc. In contrast, 3P% and FT% account for fewer overall attempts and may not capture a player's full scoring efficiency.
+
+## Looking at Team Performance
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(win_pct_compare, aes(x = Season)) +
+  geom_line(aes(y = WinnerWinPct, color = "MVP Winner"), size = 1.2) +
+  geom_line(aes(y = AvgPlayerWinPct, color = "Non-Winners"), size = 1.2) +
+  geom_point(aes(y = WinnerWinPct, color = "MVP Winner"), size = 3) +
+  geom_point(aes(y = AvgPlayerWinPct, color = "Non-Winners"), size = 3) +
+  geom_text(aes(y = WinnerWinPct, label = Initials), vjust = -1.2, size = 3.5, color = "black") +
+  labs(title = "Team Win %: MVP Winners vs. Non-Winners by Season",
+       y = "Player Win Percentage",
+       x = "Season",
+       color = "Group") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This plot compares team win percentages of MVP winners and non-winners across NBA seasons from 2011–12 to 2023–24. In earlier seasons, MVP winners consistently played on high-performing teams, often with win percentages above 75%. For example, Stephen Curry’s 2015–16 MVP season occurred on a team with a win rate near 90%. This trend suggests that team success was a major factor in MVP voting. However, in more recent seasons—starting around 2020–21, the distinction becomes less clear. Nikola Jokić and Joel Embiid won MVPs with team win percentages closer to 65–70%, which were not significantly higher than top non-winners. This shift implies that voters may be placing increased weight on individual performance and overall impact rather than team dominance alone. The evolving criteria highlights how the MVP award may be adapting to recognize elite players even on less dominant teams. Team success still matters, but it's no longer a huge factor.
+
+## Positions Changing Over Time
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(mvp_winners_only, aes(x = Season, y = Position)) +
+  geom_point(size = 4, color = "steelblue") +
+  geom_line(aes(group = 1), color = "gray") +
+  labs(title = "MVP Winner Position by Season",
+       x = "Season",
+       y = "Player Position") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This plot tracks the primary position of NBA MVP winners by season from 2011–12 to 2023–24. Early in the period, forwards dominated the MVP award, with players like LeBron James and Kevin Durant leading the way. From 2014–15 to 2018–19, guards took over, as Stephen Curry, Russell Westbrook, and James Harden won the award. This reflects a league-wide emphasis on perimeter scoring, pace, and shooting. However, starting in the 2020–21 season, the award has consistently gone to centers, marking a significant shift in MVP trends. This resurgence of the center position, highlighted by Nikola Jokić and Joel Embiid, indicates an appreciation for versatile big men who can score, pass, and defend. The evolution shown in this plot suggests that MVP criteria have shifted over time, with voter preferences adapting to changing styles of play.
+
+## Radar Chart to Analyze Performance
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+player_name <- "Nikola Jokić"
+season <- "2023-24"
+
+stats <- c("PTS", "AST", "REB", "STL", "BLK")
+
+stat_bounds <- mvp_data_2 %>%
+  filter(Season == season) %>%
+  summarise(across(all_of(stats), list(max = max, min = min))) %>%
+  pivot_longer(cols = everything(), names_to = c("stat", ".value"), names_sep = "_")
+
+player_stats <- mvp_data_2 %>%
+  filter(`Player` == player_name, Season == season) %>%
+  dplyr::select(all_of(stats))
+
+df_radar <- rbind(stat_bounds$max, stat_bounds$min, player_stats)
+
+radarchart(df_radar, axistype = 1,
+           pcol = "blue", pfcol = scales::alpha("blue", 0.3), plwd = 2,
+           title = paste(player_name, season))
+
+player_name <- "James Harden"
+season <- "2018-19"
+
+stats <- c("PTS", "AST", "REB", "STL", "BLK")
+
+stat_bounds <- mvp_data_2 %>%
+  filter(Season == season) %>%
+  summarise(across(all_of(stats), list(max = max, min = min))) %>%
+  pivot_longer(cols = everything(), names_to = c("stat", ".value"), names_sep = "_")
+
+player_stats <- mvp_data_2 %>%
+  filter(`Player` == player_name, Season == season) %>%
+  dplyr::select(all_of(stats))
+
+df_radar <- rbind(stat_bounds$max, stat_bounds$min, player_stats)
+
+radarchart(df_radar, axistype = 1,
+           pcol = "blue", pfcol = scales::alpha("blue", 0.3), plwd = 2,
+           title = paste(player_name, season))
+```
+
+Radar charts can be a great way to assess a player's performance across multiple statistical categories compared to the rest of the league. Rather than having preset minimum and maximum values for each stat, each point represents that players stat on a scale of 0% to 100%, where 0% represents they have the minimum of that stat across all MVP candidates, and 100% represents they have the maximum of that stat across all MVP candidates. In the case above with Nikola Jokic in 2023-2024, his stats were extremely good, leading all MVP candidates in assists, rebounds, and steals. If we compare this to James Harden in the 2018-2019 season, he led all MVP candidates by far in points and assists, but did not have as many assists, rebounds, or blocks. This helps demonstrate players strengths and weaknesses more clearly, and can be explained by player's positions, play style, and more.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Add per-game stats
+mvp_data_2 <- mvp_data_2 %>%
+  dplyr::mutate(
+    Winner = tolower(trimws(Winner)) == "true",  # robust character → logical
+    PPG = round(PTS / GP, 1),
+    APG = round(AST / GP, 1),
+    RPG = round(REB / GP, 1),
+    SPG = round(STL / GP, 1),
+    BPG = round(BLK / GP, 1)
+  )
+
+# Step 2: Define stats to include
+stats <- c("PPG", "APG", "RPG", "SPG", "BPG")
+
+# Step 3: Compute group averages
+avg_stats <- mvp_data_2 %>%
+  dplyr::filter(!is.na(Winner)) %>%
+  dplyr::group_by(Winner) %>%
+  dplyr::summarise(dplyr::across(all_of(stats), ~ mean(.x, na.rm = TRUE))) %>%
+  dplyr::ungroup()
+
+# Step 4: Extract group rows
+winner_row <- avg_stats %>%
+  dplyr::filter(Winner == TRUE) %>%
+  dplyr::select(all_of(stats))
+
+non_winner_row <- avg_stats %>%
+  dplyr::filter(Winner == FALSE) %>%
+  dplyr::select(all_of(stats))
+
+stat_bounds <- data.frame(
+  PPG = c(35, 15),
+  APG = c(9, 3),
+  RPG = c(12, 4),
+  SPG = c(2, 0),
+  BPG = c(1, 0)
+)
+
+# Step 6: Build radar data
+df_radar <- rbind(stat_bounds, winner_row, non_winner_row)
+
+# Step 7: Plot radar chart
+radarchart(df_radar,
+           axistype = 1,
+           pcol = c("red", "blue"),
+           pfcol = c(alpha("red", 0.3), alpha("blue", 0.3)),
+           plwd = 2,
+           title = "Average Stats: MVP Winners vs Non-Winners")
+
+legend("topright", legend = c("MVP Winner", "Non-Winner"),
+       col = c("red", "blue"), lwd = 2, bty = "n")
+```
+
+The radar chart compares the average performance of MVP winners and non-winners across points, assists, and rebounds per game. Rather than focusing on a single player, it highlights broader trends by averaging each group’s stats. The red area, representing MVP winners, is consistently larger, indicating superior all-around performance. Notably, MVPs tend to stand out not just in scoring but also in assists and rebounds, suggesting that voters value well-rounded contributions beyond just point totals. Fixed axis bounds ensure a fair visual comparison, making the performance gap more interpretable.
+
+## Conclusion
+
+Through a series of visualizations, this analysis has explored the statistical differences between MVP winners and other top candidates in the NBA. From efficiency metrics like field goal percentage to core per-game stats such as points, assists, and rebounds, clear patterns emerge that help explain what distinguishes MVPs. While some shooting metrics like 3P% and FT% show little difference, field goal percentage stands out as a potential key indicator, reflecting a winner’s scoring efficiency on high-volume attempts. Radar charts and distribution plots further reinforce that MVPs are typically more well-rounded, contributing not just in scoring but also in playmaking and rebounding. Overall, this data-driven approach offers a deeper understanding of the statistical profiles that define NBA MVP-caliber seasons
